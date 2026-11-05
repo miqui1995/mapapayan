@@ -1,0 +1,16 @@
+{
+  "name": "MapaPayán – Mapeo de calles",
+  "short_name": "MapaPayán",
+  "description": "Graba recorridos y puntos para construir el mapa de Roberto Payán y subirlo a OpenStreetMap.",
+  "lang": "es-CO",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f766e",
+  "theme_color": "#0f766e",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
