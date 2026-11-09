@@ -2,78 +2,33 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-  <title>MapaPayán</title>
-  <meta name="theme-color" content="#0f766e">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>MandaoYa</title>
+  <meta name="theme-color" content="#ea580c">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="MapaPayán">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="MandaoYa">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="vendor/leaflet.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div id="map"></div>
-
-  <!-- Barra superior de estado -->
-  <header id="topbar">
-    <div class="brand">MapaPayán</div>
-    <div id="gpsChip" class="chip chip-off" title="Precisión GPS">GPS: --</div>
+  <header id="hdr">
+    <button id="hdrBrand" class="brand"><img src="icons/icon-192.png" alt="">MandaoYa</button>
+    <span id="demoTag">DEMO</span>
+    <span id="hdrRole" class="hidden"></span>
+    <button id="hdrMenu" aria-label="Menú">☰</button>
   </header>
+  <main id="app"><div class="pad center"><p class="note">Cargando…</p></div></main>
 
-  <!-- Panel de grabación (visible mientras se graba) -->
-  <div id="recPanel" class="hidden">
-    <div class="recRow">
-      <span id="recDot" class="dot"></span>
-      <span id="recState">Grabando</span>
-      <span class="sep">·</span>
-      <span id="recDist">0 m</span>
-      <span class="sep">·</span>
-      <span id="recPts">0 pts</span>
-      <span class="sep">·</span>
-      <span id="recTime">00:00</span>
-    </div>
-    <div id="recWarn" class="warn hidden"></div>
-  </div>
-
-  <!-- Botones flotantes del mapa -->
-  <div id="mapBtns">
-    <button id="btnLayers" class="fab" aria-label="Cambiar capa">Capa</button>
-    <button id="btnFollow" class="fab on" aria-label="Seguir mi ubicación">Seguir</button>
-  </div>
-
-  <!-- Mira central para ubicar un punto -->
-  <div id="crosshair" class="hidden"><div></div></div>
-  <div id="placeBar" class="hidden">
-    <div class="placeHint">Mueve el mapa hasta que la mira quede sobre el lugar</div>
-    <div class="row">
-      <button id="btnPlaceGps" class="btn ghost">Usar mi GPS</button>
-      <button id="btnPlaceCancel" class="btn ghost">Cancelar</button>
-      <button id="btnPlaceOk" class="btn primary">Aquí</button>
-    </div>
-  </div>
-
-  <!-- Barra inferior principal -->
-  <nav id="bottombar">
-    <button id="btnRec" class="bigbtn rec"><span class="ico">●</span><span>Grabar</span></button>
-    <button id="btnPause" class="bigbtn hidden"><span class="ico">❚❚</span><span>Pausa</span></button>
-    <button id="btnStop" class="bigbtn stop hidden"><span class="ico">■</span><span>Terminar</span></button>
-    <button id="btnPoint" class="bigbtn"><span class="ico">⌖</span><span>Punto</span></button>
-    <button id="btnData" class="bigbtn"><span class="ico">≡</span><span>Datos</span></button>
-  </nav>
-
-  <!-- Hoja modal genérica -->
   <div id="sheetBg" class="hidden"></div>
-  <section id="sheet" class="hidden" role="dialog" aria-modal="true">
-    <div class="grip"></div>
-    <div id="sheetBody"></div>
-  </section>
-
+  <section id="sheet" class="hidden" role="dialog" aria-modal="true"><div class="grip"></div><div id="sheetBody"></div></section>
   <div id="toast" class="hidden"></div>
 
   <script src="vendor/leaflet.js"></script>
-  <script src="app.js"></script>
+  <script src="config.js"></script>
+  <script type="module" src="js/app.js"></script>
 </body>
 </html>

@@ -1,0 +1,14 @@
+{
+  "appId": "co.com.miquitec.mandaoya",
+  "appName": "MandaoYa",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true
+  },
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": ["badge", "sound", "alert"]
+    }
+  }
+}

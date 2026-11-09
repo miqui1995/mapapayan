@@ -1,72 +1,29 @@
-// MapaPayán service worker: app offline + caché de las teselas que ya viste
-const APP_CACHE = 'mapapayan-app-v1';
-const TILE_CACHE = 'mapapayan-tiles-v1';
-const MAX_TILES = 4000;
-
-const APP_FILES = [
-  './', './index.html', './styles.css', './app.js', './manifest.webmanifest',
-  './vendor/leaflet.js', './vendor/leaflet.css',
-  './vendor/images/layers.png', './vendor/images/layers-2x.png',
-  './vendor/images/marker-icon.png', './vendor/images/marker-icon-2x.png', './vendor/images/marker-shadow.png',
-  './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'
-];
-
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(APP_CACHE).then(c => c.addAll(APP_FILES)).then(() => self.skipWaiting()));
-});
-
-self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys().then(keys => Promise.all(
-      keys.filter(k => k.startsWith('mapapayan-app-') && k !== APP_CACHE).map(k => caches.delete(k))
-    )).then(() => self.clients.claim())
-  );
-});
-
-function isTile(url) {
-  return /tile\.openstreetmap\.org|arcgisonline\.com/.test(url.hostname);
-}
-
-async function trimTiles() {
-  const c = await caches.open(TILE_CACHE);
-  const keys = await c.keys();
-  if (keys.length > MAX_TILES) {
-    for (const k of keys.slice(0, keys.length - MAX_TILES)) await c.delete(k);
-  }
-}
-
+// MandaoYa service worker: la app abre sin señal; los datos los maneja Firestore (con caché propia)
+const APP_CACHE = 'mandaoya-app-v10';
+const TILE_CACHE = 'mandaoya-tiles-v1';
+const FILES = ['./', './index.html', './styles.css', './config.js', './manifest.webmanifest',
+  './js/app.js', './js/db.js', './js/ui.js', './js/cliente.js', './js/tienda.js', './js/domi.js', './js/admin.js', './js/seguir.js', './js/catalogo.js', './js/recargas.js', './js/native.js', './js/carreras.js',
+  './vendor/firebase/firebase-app.js', './vendor/firebase/firebase-auth.js', './vendor/firebase/firebase-firestore.js',
+  './vendor/leaflet.js', './vendor/leaflet.css', './vendor/images/marker-icon.png', './vendor/images/marker-shadow.png',
+  './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
+self.addEventListener('install', e => e.waitUntil(caches.open(APP_CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())));
+self.addEventListener('activate', e => e.waitUntil(caches.keys().then(k => Promise.all(k.filter(x => x.startsWith('mandaoya-app-') && x !== APP_CACHE).map(x => caches.delete(x)))).then(() => self.clients.claim())));
 self.addEventListener('fetch', e => {
-  const req = e.request;
-  if (req.method !== 'GET') return;
+  const req = e.request; if (req.method !== 'GET') return;
   const url = new URL(req.url);
-
-  if (isTile(url)) {
-    e.respondWith((async () => {
-      const c = await caches.open(TILE_CACHE);
-      const hit = await c.match(req);
-      if (hit) return hit;
-      try {
-        const res = await fetch(req);
-        if (res.ok || res.type === 'opaque') { c.put(req, res.clone()); trimTiles(); }
-        return res;
-      } catch (err) {
-        return new Response('', { status: 504 });
-      }
-    })());
+  if (/tile\.openstreetmap\.org/.test(url.hostname)) {
+    e.respondWith(caches.open(TILE_CACHE).then(async c => {
+      const hit = await c.match(req); if (hit) return hit;
+      try { const r = await fetch(req); if (r.ok) c.put(req, r.clone()); return r; } catch (err) { return new Response('', { status: 504 }); }
+    }));
     return;
   }
-
-  if (url.origin === self.location.origin) {
-    // App: primero red (para recibir actualizaciones), si no hay señal, caché
-    e.respondWith((async () => {
-      try {
-        const res = await fetch(req);
-        if (res.ok) (await caches.open(APP_CACHE)).put(req, res.clone());
-        return res;
-      } catch (err) {
-        const hit = await caches.match(req, { ignoreSearch: true });
-        return hit || caches.match('./index.html');
-      }
-    })());
+  if (url.hostname === 'www.gstatic.com' && url.pathname.startsWith('/firebasejs/')) {
+    e.respondWith(caches.open(APP_CACHE).then(async c => (await c.match(req)) || fetch(req).then(r => { if (r.ok) c.put(req, r.clone()); return r; })));
+    return;
+  }
+  if (url.origin === location.origin) {
+    e.respondWith(fetch(req).then(r => { if (r.ok) { const cp = r.clone(); caches.open(APP_CACHE).then(c => c.put(req, cp)); } return r; })
+      .catch(async () => (await caches.match(req, { ignoreSearch: true })) || caches.match('./index.html')));
   }
 });

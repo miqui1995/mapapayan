@@ -1,0 +1,206 @@
+rules_version = '2';
+// Reglas de seguridad de MandaoYa.
+// Pégalas en: Consola de Firebase › Firestore Database › Reglas › Publicar.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+    function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/admins/$(uid())); }
+    function hasProfile() { return signedIn() && exists(/databases/$(database)/documents/users/$(uid())); }
+    function me() { return get(/databases/$(database)/documents/users/$(uid())).data; }
+    function approvedAs(r) { return hasProfile() && me().role == r && me().approved == true; }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function cfg() { return get(/databases/$(database)/documents/config/general).data; }
+    function prepaid() { return cfg().get('prepaidEnabled', false) == true; }
+    function courierFee() { return cfg().get('courierFee', 500); }
+    function isSocio() { return hasProfile() && me().get('socio', false) == true && me().approved == true; }
+    function userPath(id) { return /databases/$(database)/documents/users/$(id); }
+
+    // Activación automática de domiciliarios: solo si el admin la encendió, subió sus documentos
+    // y (si se exige) trae un código de invitación activo. Siempre entran en nivel "prueba".
+    function courierAutoOK() {
+      let d = request.resource.data;
+      return d.role == 'domiciliario' && d.approved == true && d.level == 'prueba'
+        && cfg().get('courierAutoApprove', false) == true
+        && exists(/databases/$(database)/documents/courierDocs/$(uid()))
+        && (cfg().get('requireInvite', false) != true
+            || (d.get('inviteCode', null) is string
+                && exists(/databases/$(database)/documents/invites/$(d.inviteCode))
+                && get(/databases/$(database)/documents/invites/$(d.inviteCode)).data.get('active', false) == true));
+    }
+
+    // Administradores: se crean a mano en la consola (ID del documento = ID del usuario)
+    match /admins/{id} {
+      allow read: if signedIn() && uid() == id;
+      allow write: if false;
+    }
+
+    // Ajustes generales y tarifas por sector: los lee cualquiera, solo el admin los cambia
+    match /config/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /zones/{id}  { allow read: if true; allow write: if isAdmin(); }
+
+    // Usuarios
+    match /users/{id} {
+      // Cada quien ve su perfil; los datos de tenderos y domiciliarios son visibles para usuarios registrados;
+      // los datos de clientes solo los ve el admin.
+      allow read: if signedIn() && (uid() == id || isAdmin() || resource.data.role in ['tendero', 'domiciliario']);
+      allow create: if signedIn() && uid() == id
+        && request.resource.data.role in ['cliente', 'tendero', 'domiciliario', 'admin']
+        && (request.resource.data.role != 'admin' || isAdmin())
+        && (request.resource.data.approved == (request.resource.data.role in ['cliente', 'admin']) || courierAutoOK())
+        && (request.resource.data.role != 'domiciliario' || request.resource.data.get('level', 'prueba') == 'prueba')
+        && request.resource.data.get('socio', false) == false
+        // Saldo inicial: 0, salvo el crédito de bienvenida configurado por el admin para domiciliarios
+        && (request.resource.data.get('balance', 0) == 0
+            || (request.resource.data.role == 'domiciliario' && prepaid()
+                && request.resource.data.balance == cfg().get('welcomeCredit', 0)));
+      // Nadie se auto-aprueba ni se cambia el rol
+      allow update: if isAdmin()
+        // El usuario edita sus datos, pero no su rol, aprobación, nivel ni la marca de socio.
+        // Su saldo solo puede BAJAR (cuando paga la comisión de un domicilio); subirlo es del admin o un socio.
+        || (signedIn() && uid() == id
+            && !changed().hasAny(['role', 'approved', 'approvedAt', 'rejected', 'level', 'autoApproved', 'promotedAt', 'promotedBy', 'socio'])
+            && (!changed().hasAny(['balance']) || request.resource.data.balance < resource.data.get('balance', 0)))
+        // Un socio local solo puede subir el saldo de un domiciliario (al aprobar una recarga)
+        || (isSocio() && resource.data.role == 'domiciliario' && changed().hasOnly(['balance'])
+            && request.resource.data.balance > resource.data.get('balance', 0));
+      allow delete: if isAdmin() || (signedIn() && uid() == id);
+    }
+
+    // Documentos del domiciliario (selfie, cédula, vehículo): solo los ve él mismo y el admin
+    match /courierDocs/{id} {
+      allow read: if signedIn() && (uid() == id || isAdmin());
+      allow create, update: if signedIn() && uid() == id;
+      allow delete: if isAdmin();
+    }
+
+    // Recargas de saldo de los domiciliarios
+    match /topups/{id} {
+      allow read: if signedIn() && (resource.data.courierUid == uid() || isAdmin() || isSocio());
+      allow create: if signedIn() && request.resource.data.courierUid == uid() && request.resource.data.status == 'pendiente'
+        && request.resource.data.amount is number && request.resource.data.amount >= cfg().get('minTopup', 0);
+      allow update: if isAdmin() || (isSocio() && resource.data.status == 'pendiente'
+        && changed().hasOnly(['status', 'reviewedBy', 'reviewedByName', 'reviewedAt', 'reviewNote']) && request.resource.data.reviewedBy == uid());
+      allow delete: if isAdmin();
+    }
+
+    // Movimientos del saldo (historial)
+    match /movements/{id} {
+      allow read: if signedIn() && (resource.data.courierUid == uid() || isAdmin() || isSocio());
+      allow create: if isAdmin() || isSocio()
+        || (signedIn() && request.resource.data.courierUid == uid() && request.resource.data.type == 'comision' && request.resource.data.amount < 0)
+        || (signedIn() && request.resource.data.courierUid == uid() && request.resource.data.type == 'bono'
+            && request.resource.data.amount == cfg().get('welcomeCredit', 0));
+      allow update, delete: if isAdmin();
+    }
+
+    // Códigos de invitación
+    match /invites/{code} {
+      allow read: if signedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (signedIn() && changed().hasOnly(['uses'])
+        && request.resource.data.uses == resource.data.get('uses', 0) + 1);
+    }
+
+    // Tiendas (el ID de la tienda es el ID de su dueño)
+    match /stores/{id} {
+      allow read: if true;
+      allow create: if signedIn() && uid() == id
+        && request.resource.data.ownerUid == id && request.resource.data.approved == false;
+      allow update: if isAdmin()
+        || (signedIn() && uid() == id && !changed().hasAny(['approved', 'ownerUid']));
+      allow delete: if isAdmin();
+    }
+
+    // Productos del catálogo de cada tienda
+    match /products/{id} {
+      allow read: if true;
+      allow create: if signedIn() && request.resource.data.storeId == uid() && approvedAs('tendero');
+      allow update: if isAdmin() || (signedIn() && resource.data.storeId == uid() && request.resource.data.storeId == uid());
+      allow delete: if isAdmin() || (signedIn() && resource.data.storeId == uid());
+    }
+
+    // Carreras (estilo inDrive): el pasajero propone precio, los conductores ofertan, el pasajero elige
+    match /rides/{id} {
+      allow get: if true;
+      allow list: if signedIn() && (isAdmin() || resource.data.clientUid == uid() || resource.data.driverUid == uid()
+        || (resource.data.status == 'buscando' && approvedAs('domiciliario')));
+      allow create: if signedIn() && cfg().get('ridesEnabled', true) == true
+        && request.resource.data.clientUid == uid() && request.resource.data.status == 'buscando'
+        && request.resource.data.driverUid == null && request.resource.data.offers.size() == 0;
+      allow update: if signedIn() && (
+        isAdmin()
+        // Un conductor aprobado agrega o cambia SOLO su propia oferta
+        || (resource.data.status == 'buscando' && approvedAs('domiciliario') && changed().hasOnly(['offers'])
+            && request.resource.data.offers.diff(resource.data.offers).affectedKeys().hasOnly([uid()]))
+        // El pasajero sube su oferta, elige un conductor entre los que ofertaron (al precio ofertado), cancela o califica
+        || (resource.data.clientUid == uid() && (
+            (resource.data.status == 'buscando' && changed().hasOnly(['offer']) && request.resource.data.offer > resource.data.offer)
+         || (resource.data.status == 'buscando' && request.resource.data.status == 'asignada'
+             && request.resource.data.driverUid in resource.data.offers
+             && request.resource.data.price == resource.data.offers[request.resource.data.driverUid].price)
+         || (resource.data.status in ['buscando', 'asignada', 'llego'] && request.resource.data.status == 'cancelada'
+             && changed().hasOnly(['status', 'active', 'cancelReason', 'cancelBy', 'times']))
+         || (resource.data.status == 'finalizada' && changed().hasOnly(['rating']))))
+        // El conductor elegido avanza el viaje; al iniciarlo debe pagar la comisión de su saldo en la misma transacción
+        || (resource.data.driverUid == uid() && request.resource.data.driverUid == uid()
+            && changed().hasOnly(['status', 'active', 'driverLoc', 'times', 'feeCharged', 'cancelReason', 'cancelBy'])
+            && (request.resource.data.status != 'en_curso' || resource.data.status == 'en_curso' || !prepaid()
+                || (request.resource.data.get('feeCharged', 0) == cfg().get('rideFee', 500)
+                    && getAfter(userPath(uid())).data.get('balance', 0) == get(userPath(uid())).data.get('balance', 0) - cfg().get('rideFee', 500)
+                    && getAfter(userPath(uid())).data.get('balance', 0) >= 0)))
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Pedidos
+    match /orders/{id} {
+      // Leer un pedido por su enlace de seguimiento (el ID es aleatorio y difícil de adivinar)
+      allow get: if true;
+
+      // Listados: cada rol solo ve lo suyo; los domiciliarios aprobados ven los que buscan domiciliario
+      allow list: if signedIn() && (
+        isAdmin()
+        || resource.data.storeId == uid()
+        || resource.data.clientUid == uid()
+        || resource.data.courierUid == uid()
+        || (resource.data.status == 'buscando' && approvedAs('domiciliario'))
+      );
+
+      allow create: if signedIn() && request.resource.data.courierUid == null && (
+        // Cliente: pedido a una tienda (la tienda confirma) o mandado (va directo a domiciliarios)
+        (request.resource.data.createdBy == 'cliente' && request.resource.data.clientUid == uid() && (
+            (request.resource.data.type == 'tienda' && request.resource.data.status == 'solicitado')
+         || (request.resource.data.type == 'mandado' && request.resource.data.status == 'buscando' && request.resource.data.storeId == null)))
+        // Tienda aprobada: domicilio creado desde la tienda
+        || (request.resource.data.createdBy == 'tienda' && request.resource.data.storeId == uid() && approvedAs('tendero'))
+      );
+
+      allow update: if signedIn() && (
+        isAdmin()
+        // La tienda maneja sus pedidos
+        || (resource.data.storeId != null && resource.data.storeId == uid())
+        // Un domiciliario aprobado toma un pedido libre (solo se lo puede asignar a sí mismo)
+        || (resource.data.status == 'buscando' && resource.data.courierUid == null && approvedAs('domiciliario')
+            && request.resource.data.courierUid == uid() && request.resource.data.status == 'asignado'
+            && (me().get('level', 'completo') != 'prueba' || resource.data.total == null
+                || resource.data.total <= cfg().get('trialMaxTotal', 50000))
+            // Prepago: en la misma transacción debe descontarse la comisión de su saldo (sin quedar negativo)
+            && (!prepaid() || (request.resource.data.get('feeCharged', 0) == courierFee()
+                && getAfter(userPath(uid())).data.get('balance', 0) == get(userPath(uid())).data.get('balance', 0) - courierFee()
+                && getAfter(userPath(uid())).data.get('balance', 0) >= 0)))
+        // El domiciliario asignado avanza el pedido y comparte su ubicación
+        || (resource.data.courierUid == uid() && request.resource.data.courierUid == uid()
+            && request.resource.data.status in ['asignado', 'recogido', 'entregado']
+            && changed().hasOnly(['status', 'active', 'courierLoc', 'times', 'pinOk', 'issue', 'issueAt']))
+        // El cliente puede cancelar antes de que lo recojan, y calificar al final
+        || (resource.data.clientUid != null && resource.data.clientUid == uid() && (
+            (resource.data.status in ['solicitado', 'preparando', 'buscando'] && request.resource.data.status == 'cancelado'
+              && changed().hasOnly(['status', 'active', 'cancelReason', 'cancelBy', 'times']))
+         || (resource.data.status == 'entregado' && changed().hasOnly(['rating']))))
+      );
+      allow delete: if isAdmin();
+    }
+  }
+}
